@@ -1,0 +1,168 @@
+import { exports } from "cloudflare:workers";
+import {
+  createExecutionContext,
+  waitOnExecutionContext,
+} from "cloudflare:test";
+import { describe, expect, it, vi } from "vitest";
+
+import type { WorkerHandler } from "../src/auth";
+import { createWorkerHandler } from "../src/index";
+
+type JsonRpcResponse = {
+  result?: Record<string, unknown> & {
+    content?: Array<{ type: string; text?: string }>;
+    structuredContent?: Record<string, unknown>;
+    tools?: Array<{ name: string }>;
+  };
+  error?: Record<string, unknown>;
+};
+
+const protocolVersion = "2025-11-25";
+
+async function sendMcpRequest(
+  method: string,
+  params: Record<string, unknown>,
+  id: number,
+  worker?: WorkerHandler,
+): Promise<{ response: Response; payload: JsonRpcResponse }> {
+  const request = new Request("http://example.com/mcp", {
+    method: "POST",
+    headers: {
+      Accept: "application/json, text/event-stream",
+      "Content-Type": "application/json",
+      "MCP-Protocol-Version": protocolVersion,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+  });
+  let response: Response;
+  if (worker) {
+    const context = createExecutionContext();
+    response = await worker.fetch(request, {}, context);
+    await waitOnExecutionContext(context);
+  } else {
+    response = await exports.default.fetch(request);
+  }
+
+  expect(response.status).toBe(200);
+
+  const body = await response.text();
+  if (response.headers.get("content-type")?.includes("text/event-stream")) {
+    const data = body
+      .split("\n")
+      .find((line) => line.startsWith("data:"))
+      ?.slice(5)
+      .trim();
+
+    if (!data) {
+      throw new Error(`MCP response did not contain an SSE data event: ${body}`);
+    }
+
+    return { response, payload: JSON.parse(data) as JsonRpcResponse };
+  }
+
+  return { response, payload: JSON.parse(body) as JsonRpcResponse };
+}
+
+describe("stateless MCP Worker", () => {
+  it("initializes and exposes exactly the three generic tools without a session", async () => {
+    const initialized = await sendMcpRequest(
+      "initialize",
+      {
+        protocolVersion,
+        capabilities: {},
+        clientInfo: { name: "test-client", version: "0.0.0" },
+      },
+      1,
+    );
+
+    expect(initialized.response.headers.get("MCP-Session-Id")).toBeNull();
+    expect(initialized.payload.error).toBeUndefined();
+    expect(initialized.payload.result).toMatchObject({
+      protocolVersion,
+      serverInfo: { name: "ireland-open-data-mcp" },
+    });
+
+    const listed = await sendMcpRequest("tools/list", {}, 2);
+    expect(listed.response.headers.get("MCP-Session-Id")).toBeNull();
+    expect(listed.payload.error).toBeUndefined();
+    expect(listed.payload.result?.tools?.map((tool) => tool.name)).toEqual([
+      "search_datasets",
+      "get_dataset",
+      "get_resource",
+    ]);
+  });
+
+  it("routes a real tool call through the adapter and direct resource loader", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.hostname === "data.gov.ie") {
+        return Response.json({
+          success: true,
+          result: {
+            id: "roads",
+            name: "roads",
+            title: "Roads",
+            owner_org: "publisher",
+            organization: { title: "Publisher" },
+            resources: [
+              {
+                id: "roads-json",
+                format: "JSON",
+                url: "https://files.example.test/roads.json",
+                datastore_active: false,
+              },
+            ],
+          },
+        });
+      }
+      if (url.href === "https://files.example.test/roads.json") {
+        return Response.json([{ id: 1 }, { id: 2 }]);
+      }
+      throw new Error(`Unexpected upstream request: ${url.href}`);
+    }) as unknown as typeof fetch;
+    const worker = createWorkerHandler({
+      fetch: fetcher,
+      now: () => new Date("2026-10-04T14:00:00.000Z"),
+    });
+
+    const { response, payload } = await sendMcpRequest(
+      "tools/call",
+      {
+        name: "get_resource",
+        arguments: {
+          source: "data_gov_ie",
+          dataset_id: "roads",
+          resource_id: "roads-json",
+          limit: 1,
+          offset: 1,
+        },
+      },
+      3,
+      worker,
+    );
+
+    expect(response.headers.get("MCP-Session-Id")).toBeNull();
+    expect(payload.error).toBeUndefined();
+    expect(payload.result?.structuredContent).toEqual({
+      dataset_id: "roads",
+      resource_id: "roads-json",
+      data: [{ id: 2 }],
+      provenance: {
+        source: "data_gov_ie",
+        upstream_url: "https://files.example.test/roads.json",
+        retrieved_at: "2026-10-04T14:00:00.000Z",
+        original_format: "json",
+      },
+      pagination: { limit: 1, offset: 1, returned: 1, total: 2 },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps non-MCP routes outside the MCP endpoint in default auth mode", async () => {
+    const response = await exports.default.fetch("http://example.com/", {
+      method: "GET",
+    });
+
+    expect(response.status).toBe(404);
+  });
+});

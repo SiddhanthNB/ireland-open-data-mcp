@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ireland-open-data-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-04",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.yml"],
+      "fallthrough": true
+    }
+  ]
+}

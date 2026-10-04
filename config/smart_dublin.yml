@@ -1,0 +1,18 @@
+provider: smart_dublin
+base_url: https://data.smartdublin.ie
+endpoints:
+  package_search: /api/3/action/package_search
+  package_show: /api/3/action/package_show
+  datastore_search: /api/3/action/datastore_search
+http_timeout_ms: 10000
+pagination:
+  default_limit: 10
+  max_limit: 100
+capabilities:
+  search_datasets: true
+  get_dataset: true
+  get_resource: true
+formats:
+  - csv
+  - json
+  - xml

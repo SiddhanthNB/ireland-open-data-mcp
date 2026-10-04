@@ -1,0 +1,24 @@
+auth:
+  mode: none
+  bearer:
+    token_env: MCP_BEARER_TOKEN
+  oauth:
+    public_base_url: http://127.0.0.1:8787
+    authorize_path: /authorize
+    callback_path: /oauth/callback
+    token_path: /oauth/token
+    registration_path: /oauth/register
+    scopes_supported:
+      - mcp:read
+    required_scopes:
+      - mcp:read
+    github:
+      client_id_env: GITHUB_CLIENT_ID
+      client_secret_env: GITHUB_CLIENT_SECRET
+      authorize_url: https://github.com/login/oauth/authorize
+      token_url: https://github.com/login/oauth/access_token
+      user_url: https://api.github.com/user
+      timeout_ms: 10000
+resources:
+  max_input_bytes: 5242880
+  max_output_bytes: 1048576

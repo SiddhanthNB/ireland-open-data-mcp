@@ -1,0 +1,28 @@
+export const ERROR_MESSAGES = {
+  INVALID_SOURCE: "The requested source is not supported.",
+  INVALID_REQUEST: "The request is invalid.",
+  DATASET_NOT_FOUND: "The requested dataset could not be found.",
+  RESOURCE_NOT_FOUND: "The requested resource could not be found.",
+  UNSUPPORTED_OPERATION: "The requested operation is not supported by this source.",
+  UNSUPPORTED_FORMAT: "The requested resource format is not supported.",
+  RESOURCE_TOO_LARGE: "The requested resource exceeds the configured size limit.",
+  UPSTREAM_ERROR: "The upstream provider returned an error.",
+  UPSTREAM_TIMEOUT: "The upstream provider timed out.",
+  RATE_LIMITED: "The upstream provider rate limit was exceeded.",
+} as const;
+
+export type ErrorCode = keyof typeof ERROR_MESSAGES;
+
+export class AppError extends Error {
+  readonly code: ErrorCode;
+
+  constructor(code: ErrorCode, message: string = ERROR_MESSAGES[code]) {
+    super(message);
+    this.name = "AppError";
+    this.code = code;
+  }
+
+  toJSON(): { error: ErrorCode; message: string } {
+    return { error: this.code, message: this.message };
+  }
+}
