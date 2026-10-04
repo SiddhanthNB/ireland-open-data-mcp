@@ -28,6 +28,18 @@ Responsible for:
 
 The MCP layer must not contain provider-specific logic.
 
+The MCP layer is implemented as a TypeScript Cloudflare Worker:
+
+- application code lives under `src/`
+- `src/index.ts` is the Worker entry point
+- `src/server.ts` creates and registers the MCP server and its generic tools
+- `McpServer` comes from the official MCP TypeScript server package
+- `createMcpHandler` comes from the Cloudflare Agents SDK stateless server path
+- the handler serves Streamable HTTP at `/mcp`
+- a fresh MCP server instance is created for each request
+
+The core server is stateless and does not require Durable Objects.
+
 ## 2. Source Router
 
 The router maps a source identifier to its provider adapter.
@@ -139,6 +151,7 @@ Example resource retrieval:
 ## Design Rules
 
 - MCP tools remain generic.
+- MCP transport remains stateless.
 - Provider-specific logic stays inside adapters.
 - Format-specific logic stays inside resource handlers.
 - One request targets one provider.

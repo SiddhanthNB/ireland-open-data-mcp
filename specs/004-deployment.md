@@ -4,9 +4,9 @@
 
 Ireland Open Data MCP is deployed as a remote MCP server on:
 
-**Cloudflare Workers using Python**
+**Cloudflare Workers using TypeScript**
 
-The service is accessed over HTTP.
+The service is accessed over Streamable HTTP at `/mcp`.
 
 Local `stdio` transport is not part of the core deployment.
 
@@ -15,23 +15,35 @@ Local `stdio` transport is not part of the core deployment.
 Primary runtime:
 
 - Cloudflare Workers
-- Python
+- TypeScript
+- Cloudflare Agents SDK stateless MCP handler
+- official MCP TypeScript server package
 
 The implementation should remain compatible with Cloudflare Worker runtime constraints.
 
-Dependencies should be kept minimal.
+Application source code is stored under `src/`.
 
-Packages that require unsupported native system libraries should be avoided.
+`src/index.ts` is the Worker entry point. It exposes `/mcp` through `createMcpHandler` from `agents/mcp/server`.
+
+`src/server.ts` creates a fresh `McpServer` from `@modelcontextprotocol/server` for each request and registers the generic MCP tools.
+
+The core service is stateless. It must not use `McpAgent`, legacy stateful transports, or Durable Objects.
+
+Dependencies should be kept minimal and locked to compatible versions.
+
+Packages must be compatible with the Cloudflare Workers runtime. Node.js-only APIs, native add-ons, and dependencies that require a traditional server process should be avoided.
 
 ## Deployment Flow
 
 Expected flow:
 
-1. Develop locally.
-2. Run local Worker environment.
-3. Validate MCP tools.
-4. Deploy using Cloudflare tooling.
-5. Test the deployed remote MCP endpoint.
+1. Install locked npm dependencies.
+2. Develop locally with Wrangler.
+3. Run the local Worker environment with `wrangler dev`.
+4. Run type checks and automated tests.
+5. Validate the MCP tools at `/mcp`.
+6. Deploy with `wrangler deploy`.
+7. Test the deployed remote MCP endpoint.
 
 ## Configuration
 
@@ -42,6 +54,10 @@ Provider configuration files are stored under:
 - `config/met_eireann.yml`
 
 Configuration should contain provider-specific operational settings and capabilities.
+
+Wrangler must bundle the YAML files as read-only text modules. The TypeScript configuration loader parses and validates them when the application starts.
+
+The Worker must not rely on runtime filesystem access.
 
 Sensitive values must not be committed to the repository.
 
@@ -59,7 +75,7 @@ Secrets must never be stored in YAML configuration files or source code.
 
 ## Public MCP Endpoint
 
-The deployed service exposes a remote MCP endpoint over HTTPS.
+The deployed service exposes a stateless remote MCP endpoint at `/mcp` over HTTPS.
 
 The MCP client communicates directly with this endpoint.
 
@@ -107,7 +123,7 @@ Failures should return standardized MCP errors such as:
 
 ## Timeouts
 
-Outbound requests must use explicit timeouts.
+Outbound requests must use the Cloudflare Workers Fetch API with explicit timeout and abort handling.
 
 Timeout values may be configured per provider.
 
@@ -124,6 +140,8 @@ Logs should include:
 - execution duration where practical
 
 Logs must not expose secrets or authentication tokens.
+
+Logging should use Worker-compatible console output and structured fields where practical.
 
 ## Caching
 
@@ -143,10 +161,13 @@ Live data should not be cached without an explicit freshness policy.
 
 - single remote HTTP service
 - Cloudflare Workers as primary runtime
-- Python implementation
+- TypeScript implementation
+- stateless Streamable HTTP at `/mcp`
+- official Cloudflare Agents SDK MCP handler
 - configuration-driven providers
 - secrets outside source control
 - minimal dependencies
-- no local server dependency
+- no traditional server process
+- no Durable Object dependency required for core functionality
 - no database dependency required for core functionality
 - authentication remains optional

@@ -14,6 +14,10 @@ Supported sources:
 
 The MCP layer must not expose provider-specific tools.
 
+The tools are registered on the official MCP TypeScript server and exposed through the Cloudflare Agents SDK stateless handler.
+
+The public transport is Streamable HTTP at `/mcp`. Each request receives a fresh server instance and must not depend on in-memory session state.
+
 ## 1. search_datasets
 
 Search datasets within one provider.

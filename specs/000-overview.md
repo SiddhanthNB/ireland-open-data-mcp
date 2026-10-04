@@ -120,9 +120,13 @@ Provider-specific failures should be translated into consistent server-level err
 
 Primary deployment target:
 
-**Cloudflare Workers using Python**
+**Cloudflare Workers using TypeScript**
 
-The service is exposed as a **remote MCP server over HTTP**.
+The service is exposed as a **stateless remote MCP server over Streamable HTTP** at `/mcp`.
+
+The Worker uses the official Cloudflare Agents SDK stateless MCP handler with the official MCP TypeScript server package.
+
+Each MCP request is handled without application session state. Durable Objects are not required for the core service.
 
 Local `stdio` transport is not part of the core server.
 

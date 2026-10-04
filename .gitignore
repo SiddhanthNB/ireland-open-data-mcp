@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build, test, and tooling output
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+*.profraw
+*.log
+
+# Cloudflare
+.wrangler/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store

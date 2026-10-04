@@ -20,6 +20,10 @@ Each provider has an independent YAML configuration file:
 
 Provider URLs and operational settings must not be hardcoded in application code.
 
+The YAML files are bundled with the TypeScript Worker as read-only text modules through Wrangler. A shared configuration module under `src/` parses and validates them.
+
+The Worker must not depend on runtime filesystem access for provider configuration.
+
 ## Configuration Responsibilities
 
 Provider configuration may define:
