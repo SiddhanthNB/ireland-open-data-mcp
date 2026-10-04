@@ -13,5 +13,11 @@
       "globs": ["**/*.yml"],
       "fallthrough": true
     }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "f8fea1a1ecc8474d8cd6292f387ce406"
+    }
   ]
 }

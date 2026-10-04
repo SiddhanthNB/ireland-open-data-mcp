@@ -1,9 +1,9 @@
 auth:
-  mode: none
+  mode: oauth
   bearer:
     token_env: MCP_BEARER_TOKEN
   oauth:
-    public_base_url: http://127.0.0.1:8787
+    public_base_url: https://ireland-open-data-mcp.ireland-open-data-mcp.workers.dev
     authorize_path: /authorize
     callback_path: /oauth/callback
     token_path: /oauth/token
