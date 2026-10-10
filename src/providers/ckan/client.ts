@@ -26,7 +26,7 @@ export class CkanClient {
   }
 
   packageSearch(parameters: URLSearchParams): Promise<CkanRecord> {
-    return this.request("package_search", parameters);
+    return this.request("package_search", parameters, undefined, true);
   }
 
   packageShow(datasetId: string): Promise<CkanRecord> {
@@ -59,6 +59,7 @@ export class CkanClient {
     endpoint: string,
     parameters: URLSearchParams,
     notFoundCode?: ErrorCode,
+    searchRequest = false,
   ): Promise<CkanRecord> {
     const url = this.endpointUrl(endpoint, parameters);
     const controller = new AbortController();
@@ -84,6 +85,21 @@ export class CkanClient {
         cancelBody(response.body);
         throw new AppError(notFoundCode);
       }
+      if (
+        searchRequest &&
+        (response.status === 400 || response.status === 409)
+      ) {
+        const body = await readBoundedJsonResponse(
+          response,
+          this.maxInputBytes,
+          controller.signal,
+        );
+        const envelope = parseEnvelope(body);
+        if (!envelope.success && isSearchError(envelope.error)) {
+          throw invalidSearchQuery();
+        }
+        throw new AppError("UPSTREAM_ERROR");
+      }
       if (!response.ok) {
         cancelBody(response.body);
         throw new AppError("UPSTREAM_ERROR");
@@ -99,6 +115,9 @@ export class CkanClient {
       if (!envelope.success) {
         if (notFoundCode && isNotFoundError(envelope.error)) {
           throw new AppError(notFoundCode);
+        }
+        if (searchRequest && isSearchError(envelope.error)) {
+          throw invalidSearchQuery();
         }
         throw new AppError("UPSTREAM_ERROR");
       }
@@ -153,4 +172,19 @@ function isNotFoundError(value: unknown): boolean {
 
   const type = value.__type;
   return typeof type === "string" && type.toLowerCase().includes("not found");
+}
+
+function isSearchError(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const type = value.__type;
+  return (
+    typeof type === "string" && type.trim().toLowerCase() === "search error"
+  );
+}
+
+function invalidSearchQuery(): AppError {
+  return new AppError("INVALID_REQUEST", "The search query is invalid.");
 }

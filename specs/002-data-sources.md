@@ -63,7 +63,8 @@ Unsupported operations must fail with a standardized error.
 
 ## Supported Formats
 
-Each provider explicitly declares the resource formats it supports.
+Each provider explicitly declares the resource formats its shared direct
+resource handlers support.
 
 Examples:
 
@@ -71,9 +72,14 @@ Examples:
 - JSON
 - XML
 
-The server must not assume that every provider supports every format.
+Catalogue discovery must preserve every resource and its reported format, even
+when the server cannot retrieve that format directly. This keeps unsupported
+files discoverable instead of making them appear absent.
 
-Unsupported formats should return a standardized `UNSUPPORTED_FORMAT` error.
+The initial shared direct handlers support CSV, JSON, and XML. A resource backed
+by CKAN DataStore may instead be returned through DataStore as typed JSON.
+Attempting to retrieve any other direct format must return the standardized
+`UNSUPPORTED_FORMAT` error.
 
 ## Provider Adapters
 
@@ -105,6 +111,9 @@ It should support the generic MCP operations enabled by its configuration.
 
 Provider-specific catalogue behaviour must remain inside `DataGovAdapter`.
 
+Data.gov.ie may contain records harvested from another supported catalogue.
+Those records belong to the data.gov.ie view when `source` is `data_gov_ie`.
+
 ## Smart Dublin
 
 Source identifier:
@@ -114,6 +123,11 @@ Source identifier:
 The adapter provides access to public datasets exposed through Smart Dublin.
 
 Provider-specific catalogue behaviour must remain inside `SmartDublinAdapter`.
+
+A harvested Smart Dublin record may also be visible through `data_gov_ie`.
+Metadata such as the licence may differ because `source` selects the upstream
+catalogue and representation; it does not identify one globally canonical
+record.
 
 ## Met Éireann
 
@@ -139,6 +153,14 @@ When a provider returns a resource:
 4. The resource is fetched.
 5. Minimal format conversion is performed when required.
 6. The result is returned with provenance metadata.
+
+CSV handlers preserve source values as strings. DataStore retrieval preserves
+the value types returned by CKAN. The server must not infer types or reinterpret
+provider-specific sentinel values.
+
+For OpenAPI or similar description documents, `get_resource` returns the
+catalogued document itself. It does not execute the API described by that
+document or accept arbitrary provider-specific request parameters.
 
 ## Configuration-Driven Behaviour
 

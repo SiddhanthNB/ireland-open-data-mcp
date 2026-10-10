@@ -5,7 +5,7 @@ import {
   type AuthEnv,
   type WorkerHandler,
 } from "./auth";
-import { serverConfig } from "./config";
+import { serverConfig, type AuthConfig } from "./config";
 import { DirectResourceLoader } from "./resources";
 import { createSourceRouter } from "./runtime";
 import { createServer } from "./server";
@@ -13,6 +13,7 @@ import { createServer } from "./server";
 export interface WorkerDependencies {
   fetch?: typeof globalThis.fetch;
   now?: () => Date;
+  authConfig?: AuthConfig;
 }
 
 export function createWorkerHandler(
@@ -43,7 +44,10 @@ export function createWorkerHandler(
     },
   };
 
-  return createAuthHandler(serverConfig.auth, mcpHandler);
+  return createAuthHandler(
+    dependencies.authConfig ?? serverConfig.auth,
+    mcpHandler,
+  );
 }
 
 const handler = createWorkerHandler();

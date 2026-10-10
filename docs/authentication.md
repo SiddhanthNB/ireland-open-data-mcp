@@ -2,9 +2,11 @@
 
 Authentication is selected by `auth.mode` in `config/server.yml`.
 
+The checked-in configuration uses `oauth`.
+
 ## None
 
-`none` is the default. `/mcp` remains anonymous and existing MCP behaviour is unchanged.
+`none` leaves `/mcp` anonymous. Select it explicitly in `config/server.yml`.
 
 ## Bearer
 

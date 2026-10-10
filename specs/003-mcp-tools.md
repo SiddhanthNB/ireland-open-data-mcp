@@ -26,8 +26,8 @@ Search datasets within one provider.
 
 - `source` — required
 - `query` — optional keyword search
-- `limit` — optional
-- `offset` — optional
+- `limit` — optional integer from 1 to 100 under the current provider configs
+- `offset` — optional non-negative integer
 
 ### Example
 
@@ -73,11 +73,15 @@ Should include:
 - publisher
 - licence where available
 - tags where available
-- available resources
+- available resources, including each format and whether it is supported for retrieval
 - upstream URL
 - retrieval timestamp
 
 Resources should include enough information for a client to request them through `get_resource`.
+
+The resource list is complete metadata for the dataset and is intentionally not
+paginated. Every catalogued resource remains listed, including formats that the
+server cannot retrieve directly.
 
 ---
 
@@ -88,10 +92,10 @@ Retrieve data from a specific dataset resource.
 ### Inputs
 
 - `source` — required
-- `dataset_id` — required where applicable
-- `resource_id` — required
-- `limit` — optional
-- `offset` — optional
+- `dataset_id` — required
+- `resource_id` — required; obtain it from `get_dataset`
+- `limit` — optional integer from 1 to 100 under the current provider configs
+- `offset` — optional non-negative integer
 
 Provider adapters may internally resolve resource IDs differently.
 
@@ -106,11 +110,16 @@ Should include:
 - upstream URL
 - retrieval timestamp
 - returned data
+- whether pagination is supported for this resource
 - pagination metadata where applicable
 
 The resource may be converted into a structured representation such as JSON.
 
 The meaning of the underlying data must not be changed.
+
+`get_resource` retrieves the catalogued resource. If that resource is an
+OpenAPI document, the document is returned; the server does not execute the API
+described by it.
 
 ---
 
@@ -125,6 +134,9 @@ The meaning of the underlying data must not be changed.
 Unknown sources must return:
 
 `INVALID_SOURCE`
+
+`source` selects one upstream catalogue. A harvested dataset can appear through
+more than one source, and its metadata may differ between those catalogues.
 
 ---
 
@@ -141,28 +153,39 @@ These values come from provider configuration.
 
 Requests exceeding the maximum should be capped or rejected consistently.
 
+The current provider configurations set the `search_datasets` and
+`get_resource` limits to a maximum of 100.
+
 ---
 
 ## Pagination
 
-Where supported by the upstream provider, pagination should use:
+Pagination applies to CKAN DataStore rows, tabular resources, and top-level JSON
+arrays. Where supported, it should use:
 
 - `limit`
 - `offset`
 
 Provider-specific pagination mechanisms must remain hidden inside adapters.
 
+`pagination.total` is optional. Streaming external resources may not know the
+total without reading the entire file. Whole JSON documents and XML documents
+are returned as documents and are not paginated.
+
 ---
 
 ## Resource Formats
 
-Initial supported resource formats may include:
+All catalogued formats must remain discoverable. The initial formats supported
+for direct retrieval are:
 
 - CSV
 - JSON
 - XML
 
-Resource handlers may convert these into structured JSON responses.
+Resource handlers may convert these into structured JSON responses. CKAN
+DataStore-backed resources can be returned as typed JSON. CSV values remain
+strings, while DataStore value types are preserved.
 
 Unsupported formats return:
 

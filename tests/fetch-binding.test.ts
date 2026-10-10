@@ -64,6 +64,7 @@ describe("Worker fetch binding", () => {
     ).resolves.toEqual({
       data: [{ id: 1 }],
       pagination: { limit: 1, offset: 0, returned: 1, total: 1 },
+      pagination_supported: true,
     });
   });
 });

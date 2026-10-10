@@ -95,6 +95,7 @@ describe("DirectResourceLoader", () => {
 
     expect(result).toEqual({
       data: [{ name: "Beta", notes: 'said "hello"' }],
+      pagination_supported: true,
       pagination: { limit: 1, offset: 1, returned: 1 },
     });
     expect(cancelled).toBe(true);
@@ -107,6 +108,7 @@ describe("DirectResourceLoader", () => {
 
     expect(result).toEqual({
       data: [],
+      pagination_supported: true,
       pagination: {
         limit: 5,
         offset: 1_000_000,
@@ -123,6 +125,7 @@ describe("DirectResourceLoader", () => {
 
     expect(result).toEqual({
       data: [{ id: 2 }],
+      pagination_supported: true,
       pagination: { limit: 1, offset: 1, returned: 1, total: 3 },
     });
   });
@@ -133,7 +136,7 @@ describe("DirectResourceLoader", () => {
       new Response(JSON.stringify(document)),
     ).load(request("json", { limit: 1, offset: 1 }));
 
-    expect(result).toEqual({ data: document });
+    expect(result).toEqual({ data: document, pagination_supported: false });
     expect(result.pagination).toBeUndefined();
   });
 
@@ -143,7 +146,7 @@ describe("DirectResourceLoader", () => {
       request("xml", { limit: 1, offset: 99 }),
     );
 
-    expect(result).toEqual({ data: xml });
+    expect(result).toEqual({ data: xml, pagination_supported: false });
     expect(result.pagination).toBeUndefined();
   });
 
@@ -192,6 +195,7 @@ describe("DirectResourceLoader", () => {
 
     expect(result).toEqual({
       data: [{ id: "1", value: "one" }],
+      pagination_supported: true,
       pagination: { limit: 1, offset: 0, returned: 1 },
     });
     expect(cancelled).toBe(true);

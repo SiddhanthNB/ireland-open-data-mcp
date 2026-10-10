@@ -164,13 +164,14 @@ async function loadJson(
 
   if (!Array.isArray(document)) {
     enforceSerializedSize(document, maxOutputBytes);
-    return { data: document };
+    return { data: document, pagination_supported: false };
   }
 
   const data = document.slice(offset, offset + limit);
   enforceSerializedSize(data, maxOutputBytes);
   return {
     data,
+    pagination_supported: true,
     pagination: {
       limit,
       offset,
@@ -186,7 +187,7 @@ async function loadXml(
 ): Promise<ResourceLoadResult> {
   const data = await readText(body);
   enforceSerializedSize(data, maxOutputBytes);
-  return { data };
+  return { data, pagination_supported: false };
 }
 
 async function loadCsv(
@@ -260,7 +261,7 @@ async function loadCsv(
     returned: rows.length,
     ...(reachedEnd ? { total: dataRowCount } : {}),
   };
-  return { data: rows, pagination };
+  return { data: rows, pagination_supported: true, pagination };
 }
 
 class CsvParser {

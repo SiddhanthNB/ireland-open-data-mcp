@@ -6,18 +6,29 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import type { WorkerHandler } from "../src/auth";
+import { serverConfig } from "../src/config";
 import { createWorkerHandler } from "../src/index";
 
 type JsonRpcResponse = {
   result?: Record<string, unknown> & {
     content?: Array<{ type: string; text?: string }>;
     structuredContent?: Record<string, unknown>;
-    tools?: Array<{ name: string }>;
+    tools?: Array<{
+      name: string;
+      inputSchema?: {
+        properties?: Record<string, Record<string, unknown>>;
+        required?: string[];
+      };
+    }>;
   };
   error?: Record<string, unknown>;
 };
 
 const protocolVersion = "2025-11-25";
+const anonymousAuthConfig = { ...serverConfig.auth, mode: "none" as const };
+const anonymousWorker = createWorkerHandler({
+  authConfig: anonymousAuthConfig,
+});
 
 async function sendMcpRequest(
   method: string,
@@ -35,15 +46,12 @@ async function sendMcpRequest(
     body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
   });
   let response: Response;
-  if (worker) {
-    const context = createExecutionContext();
-    response = await worker.fetch(request, {}, context);
-    await waitOnExecutionContext(context);
-  } else {
-    response = await exports.default.fetch(request);
-  }
+  const target = worker ?? anonymousWorker;
+  const context = createExecutionContext();
+  response = await target.fetch(request, {}, context);
+  await waitOnExecutionContext(context);
 
-  expect(response.status).toBe(200);
+  expect(response.status, await response.clone().text()).toBe(200);
 
   const body = await response.text();
   if (response.headers.get("content-type")?.includes("text/event-stream")) {
@@ -90,6 +98,35 @@ describe("stateless MCP Worker", () => {
       "get_dataset",
       "get_resource",
     ]);
+    const searchTool = listed.payload.result?.tools?.find(
+      (tool) => tool.name === "search_datasets",
+    );
+    const resourceTool = listed.payload.result?.tools?.find(
+      (tool) => tool.name === "get_resource",
+    );
+    expect(searchTool?.inputSchema?.properties?.limit).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: 100,
+    });
+    expect(searchTool?.inputSchema?.properties?.offset).toMatchObject({
+      type: "integer",
+      minimum: 0,
+    });
+    expect(resourceTool?.inputSchema?.required).toEqual([
+      "source",
+      "dataset_id",
+      "resource_id",
+    ]);
+    expect(resourceTool?.inputSchema?.properties?.limit).toMatchObject({
+      type: "integer",
+      minimum: 1,
+      maximum: 100,
+    });
+    expect(resourceTool?.inputSchema?.properties?.offset).toMatchObject({
+      type: "integer",
+      minimum: 0,
+    });
   });
 
   it("routes a real tool call through the adapter and direct resource loader", async () => {
@@ -123,6 +160,7 @@ describe("stateless MCP Worker", () => {
     const worker = createWorkerHandler({
       fetch: fetcher,
       now: () => new Date("2026-10-04T14:00:00.000Z"),
+      authConfig: anonymousAuthConfig,
     });
 
     const { response, payload } = await sendMcpRequest(
@@ -153,12 +191,13 @@ describe("stateless MCP Worker", () => {
         retrieved_at: "2026-10-04T14:00:00.000Z",
         original_format: "json",
       },
+      pagination_supported: true,
       pagination: { limit: 1, offset: 1, returned: 1, total: 2 },
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps non-MCP routes outside the MCP endpoint in default auth mode", async () => {
+  it("keeps unrelated routes outside the production auth and MCP endpoints", async () => {
     const response = await exports.default.fetch("http://example.com/", {
       method: "GET",
     });

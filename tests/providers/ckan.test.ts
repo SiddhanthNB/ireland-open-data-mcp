@@ -61,6 +61,8 @@ function packageRecord(
         description: "Raw rows",
         format: "CSV",
         url: "https://files.example.test/rows.csv",
+        size: 1_234,
+        last_modified: "2026-10-01T10:30:00",
         datastore_active: true,
       },
       {
@@ -187,7 +189,7 @@ describe("shared CKAN adapter", () => {
       title: "Dataset One",
       description: "Original description",
       publisher: "Publisher",
-      available_formats: ["csv", "json", "xml"],
+      available_formats: ["csv", "json", "xml", "pdf"],
       provenance: {
         source: "data_gov_ie",
         upstream_url:
@@ -218,7 +220,7 @@ describe("shared CKAN adapter", () => {
     });
   });
 
-  it("maps detailed dataset metadata and only supported resources", async () => {
+  it("maps every detailed dataset resource and marks retrieval support", async () => {
     const upstream = queuedFetch(success(packageRecord()));
     const direct = recordingLoader();
     const adapter = new SmartDublinAdapter(
@@ -243,18 +245,187 @@ describe("shared CKAN adapter", () => {
         title: "CSV rows",
         description: "Raw rows",
         format: "csv",
+        supported: true,
+        size: 1_234,
+        last_modified: "2026-10-01T10:30:00",
+        datastore_active: true,
         upstream_url: "https://files.example.test/rows.csv",
       },
       {
         resource_id: "resource-json",
         format: "json",
+        supported: true,
+        datastore_active: false,
         upstream_url: "https://files.example.test/rows.json",
       },
       {
         resource_id: "resource-xml",
         format: "xml",
+        supported: true,
+        datastore_active: false,
         upstream_url: "https://files.example.test/rows.xml",
       },
+      {
+        resource_id: "resource-pdf",
+        format: "pdf",
+        supported: false,
+        datastore_active: false,
+        upstream_url: "https://files.example.test/rows.pdf",
+      },
+    ]);
+  });
+
+  it("normalizes dataset and resource descriptions to visible plain text", async () => {
+    const upstream = queuedFetch(
+      success(
+        packageRecord({
+          notes:
+            '<style>.x { color: red }</style><p>Public&nbsp;<strong>data</strong></p><script>hidden()</script>',
+          resources: [
+            {
+              id: "resource-csv",
+              description:
+                '<a href="https://example.safelinks.protection.outlook.com/?url=mailto%3Ahidden%40example.ie">Contact us</a>',
+              format: "CSV",
+              url: "https://files.example.test/rows.csv",
+            },
+          ],
+        }),
+      ),
+    );
+    const direct = recordingLoader();
+    const adapter = new DataGovAdapter(
+      config(),
+      dependencies(upstream.fetcher, direct.loader),
+    );
+
+    const result = await adapter.getDataset({ dataset_id: "dataset-1" });
+
+    expect(result.description).toBe("Public data");
+    expect(result.resources[0]?.description).toBe("Contact us");
+  });
+
+  it("lists normalized unsupported formats and ignores empty formats", async () => {
+    const upstream = queuedFetch(
+      success({
+        count: 1,
+        results: [
+          packageRecord({
+            resources: [
+              {
+                id: "resource-xlsx",
+                format: " XLSX ",
+                url: "https://files.example.test/rows.xlsx",
+              },
+              {
+                id: "resource-zip",
+                format: "ZIP",
+                url: "https://files.example.test/rows.zip",
+              },
+              {
+                id: "resource-geojson",
+                format: "GeoJSON",
+                url: "https://files.example.test/stations.geojson",
+              },
+              {
+                id: "resource-empty",
+                format: "   ",
+                url: "https://files.example.test/empty",
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+    const direct = recordingLoader();
+    const adapter = new DataGovAdapter(
+      config(),
+      dependencies(upstream.fetcher, direct.loader),
+    );
+
+    const result = await adapter.searchDatasets({});
+
+    expect(result.datasets[0]?.available_formats).toEqual([
+      "xlsx",
+      "zip",
+      "geojson",
+    ]);
+  });
+
+  it("keeps resources with missing formats as explicitly unsupported metadata", async () => {
+    const upstream = queuedFetch(
+      success(
+        packageRecord({
+          resources: [
+            {
+              id: "resource-blank",
+              format: "   ",
+              url: "https://files.example.test/blank",
+            },
+            {
+              id: "resource-missing",
+              url: "https://files.example.test/missing",
+            },
+          ],
+        }),
+      ),
+    );
+    const direct = recordingLoader();
+    const adapter = new DataGovAdapter(
+      config(),
+      dependencies(upstream.fetcher, direct.loader),
+    );
+
+    const result = await adapter.getDataset({ dataset_id: "dataset-1" });
+
+    expect(result.available_formats).toBeUndefined();
+    expect(result.resources).toEqual([
+      {
+        resource_id: "resource-blank",
+        format: "unknown",
+        supported: false,
+        upstream_url: "https://files.example.test/blank",
+      },
+      {
+        resource_id: "resource-missing",
+        format: "unknown",
+        supported: false,
+        upstream_url: "https://files.example.test/missing",
+      },
+    ]);
+  });
+
+  it("bases the supported flag on the provider format configuration", async () => {
+    const upstream = queuedFetch(
+      success(
+        packageRecord({
+          tags: [
+            { name: " Daily " },
+            { name: "Daily" },
+            { name: " " },
+            { name: "Meteorology" },
+          ],
+        }),
+      ),
+    );
+    const direct = recordingLoader();
+    const csvOnlyConfig = { ...config(), formats: ["csv"] as const };
+    const adapter = new DataGovAdapter(
+      csvOnlyConfig,
+      dependencies(upstream.fetcher, direct.loader),
+    );
+
+    const result = await adapter.getDataset({ dataset_id: "dataset-1" });
+
+    expect(result.tags).toEqual(["Daily", "Meteorology"]);
+    expect(result.resources.map(({ format, supported }) => ({
+      format,
+      supported,
+    }))).toEqual([
+      { format: "csv", supported: true },
+      { format: "json", supported: false },
+      { format: "xml", supported: false },
+      { format: "pdf", supported: false },
     ]);
   });
 
@@ -393,8 +564,40 @@ describe("shared CKAN adapter", () => {
         retrieved_at: NOW.toISOString(),
         original_format: "csv",
       },
+      pagination_supported: true,
       pagination: { limit: 2, offset: 4, returned: 2, total: 21 },
     });
+  });
+
+  it("retrieves a DataStore resource regardless of its original file format", async () => {
+    const dataset = packageRecord({
+      resources: [
+        {
+          id: "resource-xlsx",
+          format: "XLSX",
+          url: "https://files.example.test/rows.xlsx",
+          datastore_active: true,
+        },
+      ],
+    });
+    const upstream = queuedFetch(
+      success(dataset),
+      success({ total: 1, records: [{ row: 1 }] }),
+    );
+    const direct = recordingLoader();
+    const adapter = new DataGovAdapter(
+      config(),
+      dependencies(upstream.fetcher, direct.loader),
+    );
+
+    const result = await adapter.getResource({
+      dataset_id: "dataset-1",
+      resource_id: "resource-xlsx",
+    });
+
+    expect(result.provenance.original_format).toBe("xlsx");
+    expect(result.data).toEqual([{ row: 1 }]);
+    expect(direct.calls).toHaveLength(0);
   });
 
   it("rejects an oversized DataStore response body", async () => {
@@ -440,6 +643,7 @@ describe("shared CKAN adapter", () => {
         retrieved_at: NOW.toISOString(),
         original_format: "csv",
       },
+      pagination_supported: true,
       pagination: { limit: 1, offset: 0, returned: 1, total: 1 },
     };
     const maxInputBytes = Math.max(
@@ -486,6 +690,7 @@ describe("shared CKAN adapter", () => {
         retrieved_at: NOW.toISOString(),
         original_format: "csv",
       },
+      pagination_supported: true,
       pagination: { limit: 1, offset: 0, returned: 1, total: 1 },
     };
     const upstream = queuedFetch(success(packageRecord()), success(datastore));
@@ -566,6 +771,73 @@ describe("shared CKAN adapter", () => {
     },
   );
 
+  it.each([
+    ["CSV", "csv", "csv"],
+    ["GeoJSON", "json", "geojson"],
+    ["application/vnd.api+json", "json", "application/vnd.api+json"],
+    ["XML", "xml", "xml"],
+    ["application/atom+xml", "xml", "application/atom+xml"],
+  ] as const)(
+    "uses the exact %s label as a %s resource without losing provenance",
+    async (advertisedFormat, handlerFormat, originalFormat) => {
+      const dataset = packageRecord({
+        resources: [
+          {
+            id: "resource-direct",
+            format: advertisedFormat,
+            url: "https://files.example.test/direct",
+          },
+        ],
+      });
+      const upstream = queuedFetch(success(dataset));
+      const direct = recordingLoader({ data: { ok: true } });
+      const adapter = new DataGovAdapter(
+        config(),
+        dependencies(upstream.fetcher, direct.loader),
+      );
+
+      const result = await adapter.getResource({
+        dataset_id: "dataset-1",
+        resource_id: "resource-direct",
+      });
+
+      expect(direct.calls[0]?.format).toBe(handlerFormat);
+      expect(result.provenance.original_format).toBe(originalFormat);
+    },
+  );
+
+  it.each([
+    "XLSX",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "JSONL",
+    "JSONP",
+    "JSON; profile=example",
+  ])("does not infer direct support from the %s label", async (format) => {
+    const dataset = packageRecord({
+      resources: [
+        {
+          id: "resource-direct",
+          format,
+          url: "https://files.example.test/direct",
+        },
+      ],
+    });
+    const upstream = queuedFetch(success(dataset));
+    const direct = recordingLoader();
+    const adapter = new DataGovAdapter(
+      config(),
+      dependencies(upstream.fetcher, direct.loader),
+    );
+
+    await expect(
+      adapter.getResource({
+        dataset_id: "dataset-1",
+        resource_id: "resource-direct",
+      }),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED_FORMAT" });
+    expect(direct.calls).toHaveLength(0);
+  });
+
   it("verifies resource membership before loading", async () => {
     const upstream = queuedFetch(success(packageRecord()));
     const direct = recordingLoader();
@@ -597,19 +869,6 @@ describe("shared CKAN adapter", () => {
         resource_id: "resource-pdf",
       }),
     ).rejects.toMatchObject({ code: "UNSUPPORTED_FORMAT" });
-  });
-
-  it("requires a dataset id for CKAN resource lookup", async () => {
-    const upstream = queuedFetch();
-    const direct = recordingLoader();
-    const adapter = new DataGovAdapter(
-      config(),
-      dependencies(upstream.fetcher, direct.loader),
-    );
-
-    await expect(
-      adapter.getResource({ resource_id: "resource-json" }),
-    ).rejects.toMatchObject({ code: "INVALID_REQUEST" });
   });
 
   it("rejects pagination above the configured maximum", async () => {
@@ -669,6 +928,96 @@ describe("CKAN failure mapping", () => {
     );
 
     await expect(adapter.searchDatasets({})).rejects.toMatchObject({ code });
+  });
+
+  it.each([400, 409])(
+    "maps package_search HTTP %s to a safe invalid-query error",
+    async (status) => {
+      const upstream = queuedFetch(
+        jsonResponse(
+          {
+            success: false,
+            error: {
+              __type: "Search Error",
+              message: "raw backend details must not be returned",
+            },
+          },
+          status,
+        ),
+      );
+      const direct = recordingLoader();
+      const adapter = new DataGovAdapter(
+        config(),
+        dependencies(upstream.fetcher, direct.loader),
+      );
+
+      await expect(
+        adapter.searchDatasets({ query: "title:(broken" }),
+      ).rejects.toMatchObject({
+        code: "INVALID_REQUEST",
+        message: "The search query is invalid.",
+      });
+    },
+  );
+
+  it("keeps unrelated package_search HTTP 409 failures as upstream errors", async () => {
+    const upstream = queuedFetch(
+      jsonResponse(
+        {
+          success: false,
+          error: { __type: "Conflict Error", message: "backend conflict" },
+        },
+        409,
+      ),
+    );
+    const direct = recordingLoader();
+    const adapter = new DataGovAdapter(
+      config(),
+      dependencies(upstream.fetcher, direct.loader),
+    );
+
+    await expect(adapter.searchDatasets({})).rejects.toMatchObject({
+      code: "UPSTREAM_ERROR",
+    });
+  });
+
+  it("maps CKAN Search Error envelopes to a safe invalid-query error", async () => {
+    const upstream = queuedFetch(
+      jsonResponse({
+        success: false,
+        error: {
+          __type: "Search Error",
+          message: "raw backend details must not be returned",
+        },
+      }),
+    );
+    const direct = recordingLoader();
+    const adapter = new DataGovAdapter(
+      config(),
+      dependencies(upstream.fetcher, direct.loader),
+    );
+
+    await expect(
+      adapter.searchDatasets({ query: "title:(broken" }),
+    ).rejects.toMatchObject({
+      code: "INVALID_REQUEST",
+      message: "The search query is invalid.",
+    });
+  });
+
+  it("keeps network failures mapped to UPSTREAM_ERROR", async () => {
+    const fetcher = (async () => {
+      throw new TypeError("network unavailable");
+    }) as typeof fetch;
+    const direct = recordingLoader();
+    const adapter = new DataGovAdapter(
+      config(),
+      dependencies(fetcher, direct.loader),
+    );
+
+    await expect(adapter.searchDatasets({})).rejects.toMatchObject({
+      code: "UPSTREAM_ERROR",
+    });
   });
 
   it("maps aborted fetches to UPSTREAM_TIMEOUT", async () => {

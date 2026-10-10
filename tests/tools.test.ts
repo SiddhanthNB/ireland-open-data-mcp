@@ -1,6 +1,7 @@
 import { createMcpHandler } from "agents/mcp/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { providerConfigs } from "../src/config";
 import type {
   Dataset,
   DatasetSearchResult,
@@ -18,6 +19,18 @@ import type {
 import { SourceRouter } from "../src/router";
 import { createServer } from "../src/server";
 
+const commonMaximumLimit = Math.min(
+  ...Object.values(providerConfigs).map(
+    (config) => config.pagination.max_limit,
+  ),
+);
+const configuredDefaults = Object.values(providerConfigs)
+  .map(
+    (config) =>
+      `${config.provider}=${config.pagination.default_limit}`,
+  )
+  .join(", ");
+
 type ToolResult = {
   content?: Array<{ type: string; text?: string }>;
   isError?: boolean;
@@ -26,7 +39,14 @@ type ToolResult = {
 
 type JsonRpcResponse = {
   result?: ToolResult & {
-    tools?: Array<{ name: string; inputSchema: Record<string, unknown> }>;
+    tools?: Array<{
+      name: string;
+      description?: string;
+      inputSchema: {
+        properties?: Record<string, Record<string, unknown>>;
+        required?: string[];
+      };
+    }>;
   };
   error?: Record<string, unknown>;
 };
@@ -56,6 +76,7 @@ const dataset: Dataset = {
     {
       resource_id: "roads-json",
       format: "json",
+      supported: true,
       upstream_url: "https://example.com/resource/roads-json",
     },
   ],
@@ -66,6 +87,7 @@ const resource: Resource = {
   resource_id: "roads-json",
   data: [{ id: 1 }],
   provenance: { ...provenance, original_format: "json" },
+  pagination_supported: true,
   pagination: { limit: 1, offset: 0, returned: 1 },
 };
 
@@ -184,13 +206,34 @@ describe("generic MCP tools", () => {
       expect.arrayContaining([
         expect.objectContaining({
           name: "search_datasets",
+          description: expect.stringContaining(
+            `maximum limit of ${commonMaximumLimit}`,
+          ),
           inputSchema: expect.objectContaining({
             type: "object",
             required: ["source"],
+            properties: expect.objectContaining({
+              limit: expect.objectContaining({
+                type: "integer",
+                minimum: 1,
+                maximum: commonMaximumLimit,
+                description: expect.stringContaining(
+                  `Provider defaults: ${configuredDefaults}`,
+                ),
+              }),
+              offset: expect.objectContaining({
+                type: "integer",
+                minimum: 0,
+                description: expect.any(String),
+              }),
+            }),
           }),
         }),
         expect.objectContaining({
           name: "get_dataset",
+          description: expect.stringContaining(
+            "other formats remain visible as metadata",
+          ),
           inputSchema: expect.objectContaining({
             type: "object",
             required: ["source", "dataset_id"],
@@ -198,9 +241,29 @@ describe("generic MCP tools", () => {
         }),
         expect.objectContaining({
           name: "get_resource",
+          description: expect.stringContaining(
+            "does not execute APIs described by OpenAPI",
+          ),
           inputSchema: expect.objectContaining({
             type: "object",
-            required: ["source", "resource_id"],
+            required: ["source", "dataset_id", "resource_id"],
+            properties: expect.objectContaining({
+              limit: expect.objectContaining({
+                type: "integer",
+                minimum: 1,
+                maximum: commonMaximumLimit,
+                description: expect.stringMatching(
+                  new RegExp(
+                    `pageable resources.*Provider defaults: ${configuredDefaults}`,
+                  ),
+                ),
+              }),
+              offset: expect.objectContaining({
+                type: "integer",
+                minimum: 0,
+                description: expect.stringContaining("pageable resources"),
+              }),
+            }),
           }),
         }),
       ]),
@@ -256,6 +319,7 @@ describe("generic MCP tools", () => {
     });
     const unsupported = await callTool("get_resource", {
       source: "met_eireann",
+      dataset_id: "roads",
       resource_id: "roads-json",
     });
 
@@ -271,7 +335,7 @@ describe("generic MCP tools", () => {
     });
   });
 
-  it("returns INVALID_REQUEST for every tool before calling an adapter", async () => {
+  it("returns field-specific INVALID_REQUEST errors before calling an adapter", async () => {
     const invalidSearch = await callTool("search_datasets", {
       source: "data_gov_ie",
       limit: 0,
@@ -282,20 +346,57 @@ describe("generic MCP tools", () => {
     });
     const invalidResource = await callTool("get_resource", {
       source: "data_gov_ie",
+      dataset_id: "roads",
       resource_id: "",
     });
-
-    const expected = {
-      error: "INVALID_REQUEST",
-      message: "The request is invalid.",
-    };
+    const missingDataset = await callTool("get_resource", {
+      source: "data_gov_ie",
+      resource_id: "roads-json",
+    });
+    const excessiveLimit = await callTool("get_resource", {
+      source: "data_gov_ie",
+      dataset_id: "roads",
+      resource_id: "roads-json",
+      limit: commonMaximumLimit + 1,
+    });
+    const negativeOffset = await callTool("search_datasets", {
+      source: "data_gov_ie",
+      offset: -1,
+    });
 
     expect(invalidSearch.result.isError).toBe(true);
     expect(invalidDataset.result.isError).toBe(true);
     expect(invalidResource.result.isError).toBe(true);
-    expect(errorContent(invalidSearch.result)).toEqual(expected);
-    expect(errorContent(invalidDataset.result)).toEqual(expected);
-    expect(errorContent(invalidResource.result)).toEqual(expected);
+    expect(missingDataset.result.isError).toBe(true);
+    expect(excessiveLimit.result.isError).toBe(true);
+    expect(negativeOffset.result.isError).toBe(true);
+    expect(errorContent(invalidSearch.result)).toEqual({
+      error: "INVALID_REQUEST",
+      message: `The "limit" field must be an integer between 1 and ${commonMaximumLimit}.`,
+    });
+    expect(errorContent(invalidDataset.result)).toEqual({
+      error: "INVALID_REQUEST",
+      message:
+        'The "dataset_id" field is required and must be a non-empty string.',
+    });
+    expect(errorContent(invalidResource.result)).toEqual({
+      error: "INVALID_REQUEST",
+      message:
+        'The "resource_id" field is required and must be a non-empty string.',
+    });
+    expect(errorContent(missingDataset.result)).toEqual({
+      error: "INVALID_REQUEST",
+      message:
+        'The "dataset_id" field is required and must be a non-empty string.',
+    });
+    expect(errorContent(excessiveLimit.result)).toEqual({
+      error: "INVALID_REQUEST",
+      message: `The "limit" field must be an integer between 1 and ${commonMaximumLimit}.`,
+    });
+    expect(errorContent(negativeOffset.result)).toEqual({
+      error: "INVALID_REQUEST",
+      message: 'The "offset" field must be a non-negative integer.',
+    });
     expect(dataGovAdapter.searchDatasets).not.toHaveBeenCalled();
     expect(dataGovAdapter.getDataset).not.toHaveBeenCalled();
     expect(dataGovAdapter.getResource).not.toHaveBeenCalled();

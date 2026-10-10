@@ -236,8 +236,8 @@ resources:
 }
 
 describe("server auth configuration", () => {
-  it("defaults the bundled server to anonymous mode", () => {
-    expect(serverConfig.auth.mode).toBe("none");
+  it("uses OAuth in the bundled production configuration", () => {
+    expect(serverConfig.auth.mode).toBe("oauth");
     expect(serverConfig.auth.oauth.github.timeout_ms).toBe(10_000);
     expect(serverConfig.resources).toEqual({
       max_input_bytes: 5_242_880,

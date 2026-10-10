@@ -43,7 +43,7 @@ export interface Provenance {
   source: Source;
   upstream_url: string;
   retrieved_at: string;
-  original_format?: ResourceFormat;
+  original_format?: string;
 }
 
 export interface Pagination {
@@ -58,7 +58,7 @@ export interface DatasetSummary {
   title: string;
   description?: string;
   publisher?: string;
-  available_formats?: readonly ResourceFormat[];
+  available_formats?: readonly string[];
   provenance: Provenance;
 }
 
@@ -66,7 +66,11 @@ export interface ResourceSummary {
   resource_id: string;
   title?: string;
   description?: string;
-  format: ResourceFormat;
+  format: string;
+  supported: boolean;
+  size?: number;
+  last_modified?: string;
+  datastore_active?: boolean;
   upstream_url: string;
 }
 
@@ -80,7 +84,8 @@ export interface Resource {
   dataset_id?: string;
   resource_id: string;
   data: unknown;
-  provenance: Provenance & { original_format: ResourceFormat };
+  provenance: Provenance & { original_format: string };
+  pagination_supported: boolean;
   pagination?: Pagination;
 }
 

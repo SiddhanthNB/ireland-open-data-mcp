@@ -17,6 +17,7 @@ import type {
 } from "../provider";
 import { enforceSerializedSize } from "../../resources/limits";
 import { CkanClient, isRecord, type CkanRecord } from "./client";
+import { plainText } from "./text";
 
 export interface ResourceLoadRequest {
   url: string;
@@ -28,6 +29,7 @@ export interface ResourceLoadRequest {
 
 export interface ResourceLoadResult {
   data: unknown;
+  pagination_supported?: boolean;
   pagination?: Pagination;
 }
 
@@ -122,8 +124,14 @@ export class CkanAdapter implements ProviderAdapter {
       throw new AppError("RESOURCE_NOT_FOUND");
     }
 
+    const originalFormat = advertisedResourceFormat(resource.format);
     const format = resourceFormat(resource.format);
-    if (!format || !this.config.formats.includes(format)) {
+    const datastoreActive = resource.datastore_active === true;
+    if (
+      !originalFormat ||
+      (!datastoreActive &&
+        (!format || !this.config.formats.includes(format)))
+    ) {
       throw new AppError("UNSUPPORTED_FORMAT");
     }
 
@@ -132,7 +140,7 @@ export class CkanAdapter implements ProviderAdapter {
     const resourceId = stringField(resource, "id");
     const resourceUrl = stringField(resource, "url");
 
-    if (resource.datastore_active === true) {
+    if (datastoreActive) {
       const parameters = new URLSearchParams({
         resource_id: resourceId,
         limit: String(limit),
@@ -153,8 +161,9 @@ export class CkanAdapter implements ProviderAdapter {
             parameters,
           ),
           retrieved_at: this.now().toISOString(),
-          original_format: format,
+          original_format: originalFormat,
         },
+        pagination_supported: true,
         pagination: {
           limit,
           offset,
@@ -162,6 +171,10 @@ export class CkanAdapter implements ProviderAdapter {
           total,
         },
       });
+    }
+
+    if (!format) {
+      throw new AppError("UNSUPPORTED_FORMAT");
     }
 
     let loaded: ResourceLoadResult;
@@ -188,8 +201,10 @@ export class CkanAdapter implements ProviderAdapter {
         source: this.config.provider,
         upstream_url: resourceUrl,
         retrieved_at: this.now().toISOString(),
-        original_format: format,
+        original_format: originalFormat,
       },
+      pagination_supported:
+        loaded.pagination_supported ?? loaded.pagination !== undefined,
       ...(loaded.pagination ? { pagination: loaded.pagination } : {}),
     });
   }
@@ -201,17 +216,14 @@ export class CkanAdapter implements ProviderAdapter {
 
   private mapDatasetSummary(dataset: CkanRecord): DatasetSummary {
     const resources = arrayField(dataset, "resources").map(recordValue);
-    const formats = uniqueFormats(resources).filter((format) =>
-      this.config.formats.includes(format),
-    );
+    const formats = uniqueFormats(resources);
     const organization = optionalRecord(dataset.organization);
+    const description = normalizedDescription(dataset.notes);
 
     return {
       dataset_id: stringField(dataset, "id"),
       title: optionalString(dataset.title) ?? stringField(dataset, "name"),
-      ...(optionalString(dataset.notes)
-        ? { description: optionalString(dataset.notes) }
-        : {}),
+      ...(description ? { description } : {}),
       ...(organization && optionalString(organization.title)
         ? { publisher: optionalString(organization.title) }
         : {}),
@@ -228,12 +240,8 @@ export class CkanAdapter implements ProviderAdapter {
     const summary = this.mapDatasetSummary(dataset);
     const resources = arrayField(dataset, "resources")
       .map(recordValue)
-      .map(mapResourceSummary)
-      .filter((resource): resource is ResourceSummary => resource !== undefined)
-      .filter((resource) => this.config.formats.includes(resource.format));
-    const tags = optionalArray(dataset.tags)?.map((tag) =>
-      stringField(recordValue(tag), "name"),
-    );
+      .map((resource) => this.mapResourceSummary(resource));
+    const tags = uniqueTags(optionalArray(dataset.tags));
 
     return {
       ...summary,
@@ -242,6 +250,36 @@ export class CkanAdapter implements ProviderAdapter {
         : {}),
       ...(tags && tags.length > 0 ? { tags } : {}),
       resources,
+    };
+  }
+
+  private mapResourceSummary(
+    resource: CkanRecord,
+  ): ResourceSummary {
+    const format = advertisedResourceFormat(resource.format);
+    const retrievableFormat = resourceFormat(resource.format);
+    const datastoreActive = validOptionalBoolean(resource.datastore_active);
+    const size = validOptionalNonnegativeNumber(resource.size);
+    const lastModified = validOptionalString(resource.last_modified);
+    const description = normalizedDescription(resource.description);
+    return {
+      resource_id: stringField(resource, "id"),
+      ...(optionalString(resource.name)
+        ? { title: optionalString(resource.name) }
+        : {}),
+      ...(description ? { description } : {}),
+      format: format ?? "unknown",
+      supported:
+        format !== undefined &&
+        (datastoreActive === true ||
+          (retrievableFormat !== undefined &&
+            this.config.formats.includes(retrievableFormat))),
+      ...(size !== undefined ? { size } : {}),
+      ...(lastModified !== undefined ? { last_modified: lastModified } : {}),
+      ...(datastoreActive !== undefined
+        ? { datastore_active: datastoreActive }
+        : {}),
+      upstream_url: stringField(resource, "url"),
     };
   }
 
@@ -292,49 +330,95 @@ function requirePositiveInteger(value: number, name: string): void {
   }
 }
 
-function mapResourceSummary(resource: CkanRecord): ResourceSummary | undefined {
-  const format = resourceFormat(resource.format);
-  if (!format) {
-    return undefined;
-  }
-  return {
-    resource_id: stringField(resource, "id"),
-    ...(optionalString(resource.name)
-      ? { title: optionalString(resource.name) }
-      : {}),
-    ...(optionalString(resource.description)
-      ? { description: optionalString(resource.description) }
-      : {}),
-    format,
-    upstream_url: stringField(resource, "url"),
-  };
-}
-
-function uniqueFormats(resources: readonly CkanRecord[]): ResourceFormat[] {
+function uniqueFormats(resources: readonly CkanRecord[]): string[] {
   return [
     ...new Set(
       resources
-        .map((resource) => resourceFormat(resource.format))
-        .filter((format): format is ResourceFormat => format !== undefined),
+        .map((resource) => advertisedResourceFormat(resource.format))
+        .filter((format): format is string => format !== undefined),
     ),
   ];
 }
 
 function resourceFormat(value: unknown): ResourceFormat | undefined {
+  const normalized = advertisedResourceFormat(value);
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "csv" || normalized === "text/csv") {
+    return "csv";
+  }
+  if (
+    normalized === "json" ||
+    normalized === "geojson" ||
+    normalized === "application/json" ||
+    hasStructuredSyntaxSuffix(normalized, "json")
+  ) {
+    return "json";
+  }
+  if (
+    normalized === "xml" ||
+    normalized === "application/xml" ||
+    normalized === "text/xml" ||
+    hasStructuredSyntaxSuffix(normalized, "xml")
+  ) {
+    return "xml";
+  }
+  return undefined;
+}
+
+function advertisedResourceFormat(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
   const normalized = value.trim().toLowerCase();
-  if (normalized === "csv" || normalized.includes("text/csv")) {
+  if (normalized === "") {
+    return undefined;
+  }
+  const parameterSeparator = normalized.indexOf(";");
+  const mediaType = normalized.slice(
+    0,
+    parameterSeparator === -1 ? undefined : parameterSeparator,
+  ).trim();
+  const advertised =
+    parameterSeparator !== -1 && MEDIA_TYPE_PATTERN.test(mediaType)
+      ? mediaType
+      : normalized;
+  if (advertised === "text/csv") {
     return "csv";
   }
-  if (normalized === "json" || normalized.includes("json")) {
+  if (advertised === "application/json") {
     return "json";
   }
-  if (normalized === "xml" || normalized.includes("xml")) {
+  if (advertised === "application/xml" || advertised === "text/xml") {
     return "xml";
   }
-  return undefined;
+  return advertised;
+}
+
+function hasStructuredSyntaxSuffix(
+  value: string,
+  suffix: "json" | "xml",
+): boolean {
+  if (!MEDIA_TYPE_PATTERN.test(value)) {
+    return false;
+  }
+  const subtype = value.slice(value.indexOf("/") + 1);
+  const suffixMarker = `+${suffix}`;
+  return subtype.length > suffixMarker.length && subtype.endsWith(suffixMarker);
+}
+
+const MEDIA_TYPE_PATTERN =
+  /^[!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+$/;
+
+function uniqueTags(values: unknown[] | undefined): string[] | undefined {
+  if (!values) {
+    return undefined;
+  }
+  const tags = values
+    .map((tag) => optionalString(recordValue(tag).name)?.trim())
+    .filter((tag): tag is string => tag !== undefined && tag !== "");
+  return [...new Set(tags)];
 }
 
 function recordValue(value: unknown): CkanRecord {
@@ -378,6 +462,29 @@ function optionalString(value: unknown): string | undefined {
     throw new AppError("UPSTREAM_ERROR");
   }
   return value;
+}
+
+function normalizedDescription(value: unknown): string | undefined {
+  const description = optionalString(value);
+  if (!description) {
+    return undefined;
+  }
+  const normalized = plainText(description);
+  return normalized === "" ? undefined : normalized;
+}
+
+function validOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function validOptionalNonnegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function validOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function numberField(record: CkanRecord, field: string): number {

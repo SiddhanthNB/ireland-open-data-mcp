@@ -16,6 +16,13 @@ Read-only Irish public data through one remote MCP endpoint.
 
 No joins, analytics, recommendations, or derived insights.
 
+`source` selects one upstream catalogue. Harvested datasets can appear in more
+than one catalogue and may have different metadata there.
+
+Current provider configs allow `limit` values from 1 to 100. Resource metadata
+lists every catalogued format. Direct retrieval supports CSV, JSON, and XML;
+other direct formats return `UNSUPPORTED_FORMAT`.
+
 ## Local development
 
 Requires Node.js 22+.
@@ -26,9 +33,11 @@ cp .env.example .env
 npm run dev
 ```
 
-MCP endpoint: `http://127.0.0.1:8787/mcp`
+MCP endpoint: `https://ireland-open-data-mcp.ireland-open-data-mcp.workers.dev/mcp`
 
-The default `none` auth mode keeps this public-data server anonymous.
+The checked-in configuration uses GitHub OAuth. Add the GitHub client values to
+`.env` before starting locally. Authentication modes are documented in
+[`docs/authentication.md`](docs/authentication.md).
 
 ## Checks
 
@@ -43,9 +52,7 @@ npm test
 npm run deploy
 ```
 
-Authentication modes are configured in `config/server.yml`. See
-[`docs/authentication.md`](docs/authentication.md) for anonymous, bearer, and
-GitHub OAuth setup.
+Authentication modes are configured in `config/server.yml`.
 
 ## Runtime
 

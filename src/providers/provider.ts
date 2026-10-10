@@ -16,7 +16,7 @@ export interface GetDatasetInput {
 }
 
 export interface GetResourceInput {
-  dataset_id?: string;
+  dataset_id: string;
   resource_id: string;
   limit?: number;
   offset?: number;
